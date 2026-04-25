@@ -136,4 +136,4 @@ if [ "$SHOW_PROMPT" = "true" ]; then
   echo
 fi
 
-exec fledge ask --no-spec-index "$PROMPT" "${ASK_PASSTHROUGH[@]}"
+exec fledge ask --no-spec-index "$PROMPT" ${ASK_PASSTHROUGH[@]+"${ASK_PASSTHROUGH[@]}"}
