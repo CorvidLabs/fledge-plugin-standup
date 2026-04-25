@@ -12,6 +12,12 @@ INCLUDE_DIFF=false
 RAW=false
 SHOW_PROMPT=false
 
+# Multi-repo modes (mutually exclusive).
+REPOS_FLAG=""
+REPO_DIR=""
+GH=false
+GH_USER=""
+
 usage() {
   cat <<'EOF'
 fledge standup — Markdown standup summary from recent git activity
@@ -30,18 +36,42 @@ OPTIONS:
                       `git config user.name`. `git log --author` substring-
                       matches both name and email, so this works even when
                       your display name varies between repos.
+
+  --repos <a,b,c>     Comma-separated list of repo paths. Combines commits
+                      from each into a single standup, grouped by repo name.
+                      Mutually exclusive with --repo-dir and --gh.
+  --repo-dir <path>   Auto-discover all git repos one level deep under <path>
+                      (anything containing a `.git/` directory). Equivalent
+                      to expanding to --repos for each match.
+  --gh                Use `gh search commits` to fan out across every repo on
+                      GitHub the user can see. Doesn't need local clones.
+                      Requires the `gh` CLI authenticated. With --me (or no
+                      --author), defaults to author:@me.
+  --gh-user <USER>    Restrict --gh search to a specific GitHub username.
+                      Mutually exclusive with --me when --gh is active.
+
   --include-diff      Include diff stats in the model's context (slower, richer)
-  --raw               Skip the AI step — print the raw `git log` output
+  --raw               Skip the AI step — print the raw aggregated log
   --show-prompt       Print the prompt that was sent (debug)
   -h, --help          Show this help
 
 EXAMPLES:
-  fledge standup                          # last 24h, current user, narrated
-  fledge standup --since "1 week ago"     # weekly recap
-  fledge standup --author "Leif"
-  fledge standup --since yesterday --include-diff
-  fledge standup --raw                    # plain log, no LLM
-  fledge standup -- --provider ollama     # forward provider/model to `ask`
+  # Single repo (default)
+  fledge standup
+  fledge standup --since "1 week ago" --me
+
+  # Multi-repo: specific paths
+  fledge standup --repos ~/dev/foo,~/dev/bar,~/dev/fledge --me
+
+  # Multi-repo: auto-discover under a parent dir
+  fledge standup --repo-dir ~/Development --me --since "1 week ago"
+
+  # GitHub-wide (requires `gh auth`): every commit you pushed anywhere
+  fledge standup --gh --since "1 week ago"
+  fledge standup --gh --gh-user 0xLeif --since yesterday
+
+  # Forward provider/model to fledge ask
+  fledge standup --me -- --provider ollama --model qwen3-coder:480b-cloud
 EOF
 }
 
@@ -53,6 +83,13 @@ while [ $# -gt 0 ]; do
     --author)       AUTHOR="${2:?--author needs a value}"; shift 2 ;;
     --author=*)     AUTHOR="${1#*=}"; shift ;;
     --me)           ME=true; shift ;;
+    --repos)        REPOS_FLAG="${2:?--repos needs a value}"; shift 2 ;;
+    --repos=*)      REPOS_FLAG="${1#*=}"; shift ;;
+    --repo-dir)     REPO_DIR="${2:?--repo-dir needs a value}"; shift 2 ;;
+    --repo-dir=*)   REPO_DIR="${1#*=}"; shift ;;
+    --gh)           GH=true; shift ;;
+    --gh-user)      GH_USER="${2:?--gh-user needs a value}"; shift 2 ;;
+    --gh-user=*)    GH_USER="${1#*=}"; shift ;;
     --include-diff) INCLUDE_DIFF=true; shift ;;
     --raw)          RAW=true; shift ;;
     --show-prompt)  SHOW_PROMPT=true; shift ;;
@@ -65,54 +102,208 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  echo "fledge standup: not inside a git repository." >&2
-  exit 65
+# Validate mode exclusivity.
+mode_count=0
+[ -n "$REPOS_FLAG" ] && mode_count=$((mode_count + 1))
+[ -n "$REPO_DIR" ]   && mode_count=$((mode_count + 1))
+[ "$GH" = "true" ]   && mode_count=$((mode_count + 1))
+if [ "$mode_count" -gt 1 ]; then
+  echo "fledge standup: --repos, --repo-dir, and --gh are mutually exclusive." >&2
+  exit 64
 fi
 
-# Default behavior: no author filter. Squash-merge workflows often land
-# commits under a "real name" that differs from local `git config user.name`,
-# so auto-filtering surprises users with empty results. Use --me / --author
-# to opt in to filtering.
-#
-# --me prefers `git config user.email` because email is stable across
-# squash-merges (the display name often isn't — a contributor's local
-# user.name might be a handle while their committed name is their real
-# first name). `git log --author` does substring match against both name
-# AND email, so passing the email finds commits regardless of how the
-# display name was rendered.
-if [ "$ME" = "true" ] && [ -z "$AUTHOR" ]; then
-  AUTHOR="$(git config user.email 2>/dev/null || true)"
-  if [ -z "$AUTHOR" ]; then
-    AUTHOR="$(git config user.name 2>/dev/null || true)"
+# Resolve --me to an author string (email-first; falls back to name).
+resolve_me() {
+  local a
+  a="$(git config user.email 2>/dev/null || true)"
+  if [ -z "$a" ]; then
+    a="$(git config user.name 2>/dev/null || true)"
   fi
-  if [ -z "$AUTHOR" ]; then
+  if [ -z "$a" ]; then
     echo "fledge standup: --me passed but neither user.email nor user.name is set." >&2
     exit 65
   fi
+  echo "$a"
+}
+
+if [ "$ME" = "true" ] && [ -z "$AUTHOR" ]; then
+  AUTHOR="$(resolve_me)"
 fi
 
-# Build the git log args carefully — avoid eval on user input.
-LOG_ARGS=(log --since="$SINCE" --pretty=format:'%h  %s')
-if [ -n "$AUTHOR" ]; then
-  LOG_ARGS+=(--author="$AUTHOR")
-fi
+# Pretty-print a repo's commits with a `## <repo-name>` header.
+# Args: <repo-path> <repo-display-name>
+log_one_repo() {
+  local repo="$1"
+  local label="$2"
+  if [ ! -d "$repo/.git" ] && [ ! -f "$repo/.git" ]; then
+    echo "fledge standup: '$repo' is not a git repo (skipping)." >&2
+    return 0
+  fi
+  local args=(-C "$repo" log --since="$SINCE" --pretty=format:'%h  %s')
+  if [ -n "$AUTHOR" ]; then
+    args+=(--author="$AUTHOR")
+  fi
+  local out
+  out="$(git "${args[@]}" 2>/dev/null || true)"
+  if [ -n "$out" ]; then
+    printf '## %s\n%s\n\n' "$label" "$out"
+  fi
+}
 
-LOG="$(git "${LOG_ARGS[@]}" || true)"
+# Build LOG (and optionally DIFF_STATS) per the active mode.
+LOG=""
+DIFF_STATS=""
+
+if [ "$GH" = "true" ]; then
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "fledge standup: --gh requires the GitHub CLI (gh) to be installed and authenticated." >&2
+    exit 127
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "fledge standup: --gh requires jq for parsing GitHub search results." >&2
+    exit 127
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "fledge standup: --gh requires python3 for date math." >&2
+    exit 127
+  fi
+
+  # gh search commits expects an ISO date for committer-date filtering.
+  # Convert SINCE (which can be "24 hours ago", "yesterday", or a date) into
+  # YYYY-MM-DD. Python is universally available; bash `date` flag syntax
+  # differs between BSD and GNU.
+  SINCE_ISO="$(python3 - <<PY
+import re, sys
+from datetime import datetime, timedelta, timezone
+spec = """${SINCE}"""
+spec = spec.strip().lower()
+now = datetime.now(timezone.utc)
+m = re.match(r'(\d+)\s*(hour|day|week|month|year)s?\s*ago$', spec)
+if m:
+    n, unit = int(m.group(1)), m.group(2)
+    days = {'hour': n / 24, 'day': n, 'week': 7 * n, 'month': 30 * n, 'year': 365 * n}[unit]
+    print((now - timedelta(days=days)).strftime('%Y-%m-%d'))
+elif spec == 'yesterday':
+    print((now - timedelta(days=1)).strftime('%Y-%m-%d'))
+elif spec == 'today':
+    print(now.strftime('%Y-%m-%d'))
+elif re.match(r'\d{4}-\d{2}-\d{2}', spec):
+    print(spec[:10])
+else:
+    sys.exit(f"fledge standup: --gh can't convert --since '{spec}' to an ISO date. "
+             f"Use a relative form ('1 week ago', 'yesterday') or YYYY-MM-DD.")
+PY
+)"
+
+  # Resolve who we're searching for.
+  GH_AUTHOR=""
+  if [ -n "$GH_USER" ]; then
+    GH_AUTHOR="$GH_USER"
+  elif [ "$ME" = "true" ] || [ -z "$AUTHOR" ]; then
+    GH_AUTHOR="@me"
+  else
+    # AUTHOR was set explicitly via --author. Try it as a GitHub login.
+    GH_AUTHOR="$AUTHOR"
+  fi
+
+  # gh search commits — paginate up to 200 results.
+  GH_JSON="$(gh search commits \
+    --author="$GH_AUTHOR" \
+    --committer-date=">=$SINCE_ISO" \
+    --limit=200 \
+    --json sha,commit,repository 2>/dev/null || true)"
+  if [ -z "$GH_JSON" ] || [ "$GH_JSON" = "[]" ]; then
+    echo "fledge standup: no commits found on GitHub for author '$GH_AUTHOR' since $SINCE_ISO." >&2
+    exit 0
+  fi
+
+  # Group commits by repository.fullName. jq does the heavy lifting.
+  LOG="$(jq -r '
+    [.[] | {repo: .repository.fullName, sha: .sha[:7], subject: (.commit.message | split("\n")[0])}]
+    | group_by(.repo)
+    | sort_by(.[0].repo)
+    | map("## \(.[0].repo)\n" + (map("\(.sha)  \(.subject)") | join("\n")))
+    | join("\n\n")
+  ' <<<"$GH_JSON")"
+
+elif [ -n "$REPOS_FLAG" ] || [ -n "$REPO_DIR" ]; then
+  # Build a list of repo paths.
+  REPO_PATHS=()
+  if [ -n "$REPOS_FLAG" ]; then
+    IFS=',' read -ra split <<<"$REPOS_FLAG"
+    for r in "${split[@]}"; do
+      r="$(echo "$r" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+      [ -n "$r" ] && REPO_PATHS+=("$r")
+    done
+  fi
+  if [ -n "$REPO_DIR" ]; then
+    if [ ! -d "$REPO_DIR" ]; then
+      echo "fledge standup: --repo-dir '$REPO_DIR' is not a directory." >&2
+      exit 65
+    fi
+    while IFS= read -r found; do
+      REPO_PATHS+=("$found")
+    done < <(find "$REPO_DIR" -mindepth 1 -maxdepth 2 -name '.git' -prune 2>/dev/null \
+             | sed 's|/\.git$||' | sort)
+  fi
+
+  if [ ${#REPO_PATHS[@]} -eq 0 ]; then
+    echo "fledge standup: no repos to scan." >&2
+    exit 65
+  fi
+
+  # Aggregate logs.
+  combined=""
+  for repo in "${REPO_PATHS[@]}"; do
+    repo_expanded="${repo/#\~/$HOME}"
+    label="$(basename "$(cd "$repo_expanded" 2>/dev/null && pwd 2>/dev/null || echo "$repo")")"
+    chunk="$(log_one_repo "$repo_expanded" "$label")"
+    if [ -n "$chunk" ]; then
+      combined="$combined$chunk"
+    fi
+  done
+  LOG="$(printf '%s' "$combined" | sed -e :a -e '/^$/{$d;N;ba' -e '}')"  # trim trailing blank lines
+
+else
+  # Default: current repo.
+  if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "fledge standup: not inside a git repository (use --repos, --repo-dir, or --gh)." >&2
+    exit 65
+  fi
+
+  LOG_ARGS=(log --since="$SINCE" --pretty=format:'%h  %s')
+  if [ -n "$AUTHOR" ]; then
+    LOG_ARGS+=(--author="$AUTHOR")
+  fi
+  LOG="$(git "${LOG_ARGS[@]}" || true)"
+
+  if [ -z "$LOG" ]; then
+    if [ -n "$AUTHOR" ]; then
+      echo "fledge standup: no commits by '$AUTHOR' since '$SINCE'." >&2
+      OTHER_AUTHORS="$(git log --since="$SINCE" --pretty=format:'%an' 2>/dev/null | sort -u | head -5)"
+      if [ -n "$OTHER_AUTHORS" ]; then
+        echo "  Recent authors in this window:" >&2
+        echo "$OTHER_AUTHORS" | sed 's/^/    - /' >&2
+        echo "  Try: fledge standup --author <name>  (or drop --me/--author for everyone)" >&2
+      fi
+    else
+      echo "fledge standup: no commits since '$SINCE'." >&2
+    fi
+    exit 0
+  fi
+
+  # Diff stats only meaningful for single-repo mode (multi-repo would be huge).
+  if [ "$INCLUDE_DIFF" = "true" ]; then
+    STAT_ARGS=(log --since="$SINCE" --shortstat --pretty=format:'%h' --no-merges)
+    if [ -n "$AUTHOR" ]; then
+      STAT_ARGS+=(--author="$AUTHOR")
+    fi
+    DIFF_STATS="$(git "${STAT_ARGS[@]}" 2>/dev/null | head -500 || true)"
+  fi
+fi
 
 if [ -z "$LOG" ]; then
-  if [ -n "$AUTHOR" ]; then
-    echo "fledge standup: no commits by '$AUTHOR' since '$SINCE'." >&2
-    # Hint when the user probably hit the squash-merge name mismatch.
-    OTHER_AUTHORS="$(git log --since="$SINCE" --pretty=format:'%an' 2>/dev/null | sort -u | head -5)"
-    if [ -n "$OTHER_AUTHORS" ]; then
-      echo "  Recent authors in this window:" >&2
-      echo "$OTHER_AUTHORS" | sed 's/^/    - /' >&2
-      echo "  Try: fledge standup --author <name>  (or drop --me/--author for everyone)" >&2
-    fi
-  else
-    echo "fledge standup: no commits since '$SINCE'." >&2
-  fi
+  echo "fledge standup: nothing to summarize." >&2
   exit 0
 fi
 
@@ -121,18 +312,15 @@ if [ "$RAW" = "true" ]; then
   exit 0
 fi
 
-# Diff stats are optional — they give the model more to work with at the cost
-# of context tokens. Cap at 500 lines.
-DIFF_STATS=""
-if [ "$INCLUDE_DIFF" = "true" ]; then
-  STAT_ARGS=(log --since="$SINCE" --shortstat --pretty=format:'%h' --no-merges)
-  if [ -n "$AUTHOR" ]; then
-    STAT_ARGS+=(--author="$AUTHOR")
-  fi
-  DIFF_STATS="$(git "${STAT_ARGS[@]}" 2>/dev/null | head -500 || true)"
+# Determine the label for the prompt's "Repo:" line.
+SCOPE_LABEL=""
+if [ "$GH" = "true" ]; then
+  SCOPE_LABEL="GitHub-wide (author: ${GH_AUTHOR:-@me})"
+elif [ -n "$REPOS_FLAG" ] || [ -n "$REPO_DIR" ]; then
+  SCOPE_LABEL="$(echo "$LOG" | grep -c '^## ' || echo 0) repos"
+else
+  SCOPE_LABEL="$(basename "$(git rev-parse --show-toplevel 2>/dev/null || echo project)")"
 fi
-
-REPO_NAME="$(basename "$(git rev-parse --show-toplevel 2>/dev/null || echo project)")"
 
 PROMPT="You are turning a list of git commits into a concise, paste-ready Markdown standup post for a team channel.
 
@@ -142,13 +330,13 @@ Output exactly three sections, in this order, using these headers verbatim:
   ## Blockers
 
 Rules:
-- \"Yesterday\" — what was actually done. Write 3–6 bullet points grouped by theme. Use commit subjects but rewrite them in the past tense and strip conventional-commit prefixes (feat:, fix:, etc.).
+- \"Yesterday\" — what was actually done. Write 3–8 bullet points grouped by theme. Use commit subjects but rewrite them in the past tense and strip conventional-commit prefixes (feat:, fix:, etc.). When commits span multiple repos (the input may have \"## owner/repo\" headers), call out which repo each bullet belongs to in parentheses, e.g. \"- Bumped tokei to library mode (fledge-plugin-metrics)\".
 - \"Today\" — make 1–3 plausible next-step bullets inferred from the commits. Mark them as inferences with a leading \"(inferred)\" so the reader can edit.
 - \"Blockers\" — write \"None\" unless the commits clearly indicate one (e.g. a 'wip:' or 'blocked:' subject). No speculation.
 - No preamble. No trailing summary. Just the three sections.
-- Total length: 10 lines or fewer.
+- Total length: 14 lines or fewer.
 
-Repo: $REPO_NAME
+Scope: $SCOPE_LABEL
 Window: since $SINCE${AUTHOR:+ (author: $AUTHOR)}
 
 Commits:
