@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.3.1] - 2026-04-25
+
+### Fixed
+
+- Each commit line now carries its own date (`YYYY-MM-DD` in local time) and the prompt tells the model what "today" is, so commits made today actually land under `## Today` instead of being lumped under `## Yesterday`.
+- Tightened the "Blockers" rule to only trigger on `wip:` / `blocked:` / `revert:` prefixes (no speculation).
+
 ## [v0.3.0] - 2026-04-25
 
 ### Changed

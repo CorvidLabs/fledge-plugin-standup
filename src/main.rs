@@ -12,7 +12,7 @@ use std::process::{Command, ExitCode, Stdio};
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 use serde::Deserialize;
-use time::{Duration, OffsetDateTime};
+use time::{format_description::well_known::Rfc3339, Duration, OffsetDateTime, UtcOffset};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -96,7 +96,13 @@ fn run() -> Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
 
-    let prompt = build_prompt(&cli, &scope.label, &scope.log, scope.diff_stats.as_deref());
+    let prompt = build_prompt(
+        &cli,
+        &scope.label,
+        &scope.log,
+        scope.diff_stats.as_deref(),
+        &today_str(),
+    );
 
     if cli.show_prompt {
         eprintln!("--- prompt ---");
@@ -244,8 +250,14 @@ fn scope_multi(cli: &Cli) -> Result<Scope> {
 // MARK: - GitHub-wide
 
 #[derive(Deserialize)]
-struct GhCommitMessage {
+struct GhCommitter {
+    date: String,
+}
+
+#[derive(Deserialize)]
+struct GhCommitInner {
     message: String,
+    committer: GhCommitter,
 }
 
 #[derive(Deserialize)]
@@ -257,7 +269,7 @@ struct GhRepository {
 #[derive(Deserialize)]
 struct GhCommit {
     sha: String,
-    commit: GhCommitMessage,
+    commit: GhCommitInner,
     repository: GhRepository,
 }
 
@@ -305,21 +317,23 @@ fn scope_gh(cli: &Cli) -> Result<Scope> {
         return Ok(Scope { log: String::new(), diff_stats: None, label });
     }
 
-    let mut by_repo: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+    let offset = local_offset();
+    let mut by_repo: BTreeMap<String, Vec<(String, String, String)>> = BTreeMap::new();
     for entry in commits {
         let short_sha: String = entry.sha.chars().take(7).collect();
         let subject = entry.commit.message.lines().next().unwrap_or("").to_string();
+        let date = iso_to_local_date(&entry.commit.committer.date, offset);
         by_repo
             .entry(entry.repository.full_name)
             .or_default()
-            .push((short_sha, subject));
+            .push((date, short_sha, subject));
     }
 
     let mut log = String::new();
     for (repo, entries) in &by_repo {
         log.push_str(&format!("## {repo}\n"));
-        for (sha, subject) in entries {
-            log.push_str(&format!("{sha}  {subject}\n"));
+        for (date, sha, subject) in entries {
+            log.push_str(&format!("{date}  {sha}  {subject}\n"));
         }
         log.push('\n');
     }
@@ -330,7 +344,13 @@ fn scope_gh(cli: &Cli) -> Result<Scope> {
 
 // MARK: - Prompt
 
-fn build_prompt(cli: &Cli, scope_label: &str, log: &str, diff_stats: Option<&str>) -> String {
+fn build_prompt(
+    cli: &Cli,
+    scope_label: &str,
+    log: &str,
+    diff_stats: Option<&str>,
+    today: &str,
+) -> String {
     let author_part = match &cli.author {
         Some(a) => format!(" (author: {a})"),
         None => String::new(),
@@ -343,10 +363,12 @@ Output exactly three sections, in this order, using these headers verbatim:\n\
   ## Today\n\
   ## Blockers\n\
 \n\
+Today's date is {today}. Each commit line in the input begins with its date in YYYY-MM-DD form, then the short SHA, then the subject.\n\
+\n\
 Rules:\n\
-- \"Yesterday\" — what was actually done. Write 3–8 bullet points grouped by theme. Use commit subjects but rewrite them in the past tense and strip conventional-commit prefixes (feat:, fix:, etc.). When commits span multiple repos (the input may have \"## owner/repo\" headers), call out which repo each bullet belongs to in parentheses, e.g. \"- Bumped tokei to library mode (fledge-plugin-metrics)\".\n\
-- \"Today\" — make 1–3 plausible next-step bullets inferred from the commits. Mark them as inferences with a leading \"(inferred)\" so the reader can edit.\n\
-- \"Blockers\" — write \"None\" unless the commits clearly indicate one (e.g. a 'wip:' or 'blocked:' subject). No speculation.\n\
+- \"Yesterday\" — past-tense bullets for commits whose date is BEFORE {today}. Write 3–8 bullets grouped by theme. Use the commit subjects, rewrite them in past tense, and strip conventional-commit prefixes (feat:, fix:, etc.). When commits span multiple repos (the input may have \"## owner/repo\" headers), call out which repo each bullet belongs to in parentheses, e.g. \"- Bumped tokei to library mode (fledge-plugin-metrics)\".\n\
+- \"Today\" — past-tense bullets for commits whose date IS {today}, written the same way as Yesterday (multi-repo annotations included). If there are no commits dated {today}, then instead write 1–3 plausible next-step bullets inferred from the commits, each prefixed with \"(inferred)\" so the reader can edit.\n\
+- \"Blockers\" — write \"None\" unless a commit subject explicitly signals one (e.g. starts with `wip:`, `blocked:`, or `revert:`). No speculation.\n\
 - No preamble. No trailing summary. Just the three sections.\n\
 - Total length: 14 lines or fewer.\n\
 \n\
@@ -435,7 +457,8 @@ fn git_log(path: &Path, since: &str, author: Option<&str>) -> Result<String> {
     let mut cmd = Command::new("git");
     cmd.arg("-C").arg(path).arg("log");
     cmd.arg(format!("--since={since}"));
-    cmd.arg("--pretty=format:%h  %s");
+    cmd.arg("--pretty=format:%cd  %h  %s");
+    cmd.arg("--date=format-local:%Y-%m-%d");
     if let Some(name) = author {
         cmd.arg(format!("--author={name}"));
     }
@@ -545,4 +568,20 @@ fn since_to_iso_date(spec: &str) -> Result<String> {
 fn format_iso_date(when: OffsetDateTime) -> String {
     let date = when.date();
     format!("{:04}-{:02}-{:02}", date.year(), date.month() as u8, date.day())
+}
+
+fn local_offset() -> UtcOffset {
+    UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC)
+}
+
+fn today_str() -> String {
+    let now = OffsetDateTime::now_utc().to_offset(local_offset());
+    format_iso_date(now)
+}
+
+fn iso_to_local_date(iso: &str, offset: UtcOffset) -> String {
+    OffsetDateTime::parse(iso, &Rfc3339)
+        .map(|dt| dt.to_offset(offset))
+        .map(format_iso_date)
+        .unwrap_or_else(|_| iso.chars().take(10).collect())
 }

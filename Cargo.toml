@@ -1,6 +1,6 @@
 [package]
 name = "fledge-plugin-standup"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 rust-version = "1.89"
 description = "Markdown standup summary from your recent git commits, narrated by the active LLM."
@@ -17,7 +17,7 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-time = "0.3"
+time = { version = "0.3", features = ["local-offset", "parsing"] }
 
 [profile.release]
 strip = true
