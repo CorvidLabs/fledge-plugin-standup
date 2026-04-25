@@ -7,6 +7,7 @@ set -euo pipefail
 
 SINCE="24 hours ago"
 AUTHOR=""
+ME=false
 INCLUDE_DIFF=false
 RAW=false
 SHOW_PROMPT=false
@@ -22,7 +23,11 @@ OPTIONS:
   --since <SPEC>      Time window for commits (default: "24 hours ago").
                       Anything `git log --since` accepts: "1 week ago",
                       "yesterday", "2026-04-20", etc.
-  --author <NAME>     Filter to a specific author (default: current git user)
+  --author <NAME>     Filter to a specific author. Matches `git log --author`
+                      semantics (substring against name AND email).
+  --me                Shorthand for --author "$(git config user.name)" — but
+                      try plain (no filter) first if your commits land via
+                      squash-merge under a different name.
   --include-diff      Include diff stats in the model's context (slower, richer)
   --raw               Skip the AI step — print the raw `git log` output
   --show-prompt       Print the prompt that was sent (debug)
@@ -45,6 +50,7 @@ while [ $# -gt 0 ]; do
     --since=*)      SINCE="${1#*=}"; shift ;;
     --author)       AUTHOR="${2:?--author needs a value}"; shift 2 ;;
     --author=*)     AUTHOR="${1#*=}"; shift ;;
+    --me)           ME=true; shift ;;
     --include-diff) INCLUDE_DIFF=true; shift ;;
     --raw)          RAW=true; shift ;;
     --show-prompt)  SHOW_PROMPT=true; shift ;;
@@ -62,9 +68,16 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   exit 65
 fi
 
-# Default author to the current git user if --author wasn't specified.
-if [ -z "$AUTHOR" ]; then
+# Default behavior: no author filter. Squash-merge workflows often land
+# commits under a "real name" that differs from local `git config user.name`,
+# so auto-filtering surprises users with empty results. Use --me / --author
+# to opt in to filtering.
+if [ "$ME" = "true" ] && [ -z "$AUTHOR" ]; then
   AUTHOR="$(git config user.name 2>/dev/null || true)"
+  if [ -z "$AUTHOR" ]; then
+    echo "fledge standup: --me passed but git config user.name is unset." >&2
+    exit 65
+  fi
 fi
 
 # Build the git log args carefully — avoid eval on user input.
@@ -78,6 +91,13 @@ LOG="$(git "${LOG_ARGS[@]}" || true)"
 if [ -z "$LOG" ]; then
   if [ -n "$AUTHOR" ]; then
     echo "fledge standup: no commits by '$AUTHOR' since '$SINCE'." >&2
+    # Hint when the user probably hit the squash-merge name mismatch.
+    OTHER_AUTHORS="$(git log --since="$SINCE" --pretty=format:'%an' 2>/dev/null | sort -u | head -5)"
+    if [ -n "$OTHER_AUTHORS" ]; then
+      echo "  Recent authors in this window:" >&2
+      echo "$OTHER_AUTHORS" | sed 's/^/    - /' >&2
+      echo "  Try: fledge standup --author <name>  (or drop --me/--author for everyone)" >&2
+    fi
   else
     echo "fledge standup: no commits since '$SINCE'." >&2
   fi
@@ -93,7 +113,7 @@ fi
 # of context tokens. Cap at 500 lines.
 DIFF_STATS=""
 if [ "$INCLUDE_DIFF" = "true" ]; then
-  STAT_ARGS=(log --since="$SINCE" --shortstat --pretty=format:'%h')
+  STAT_ARGS=(log --since="$SINCE" --shortstat --pretty=format:'%h' --no-merges)
   if [ -n "$AUTHOR" ]; then
     STAT_ARGS+=(--author="$AUTHOR")
   fi
