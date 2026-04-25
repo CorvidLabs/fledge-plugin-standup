@@ -14,9 +14,6 @@ $ fledge standup --gh --since "1 week ago"
 
 ## Today
 - (inferred) Cut v0.15.3 and watch the post-release formula PR land
-
-## Blockers
-None
 ```
 
 ## Install
@@ -92,16 +89,16 @@ Anything after `--` is forwarded to `fledge ask`.
 
 A single Rust binary that:
 
-1. Resolves the active mode (single / `--repos` / `--repo-dir` / `--gh`) and aggregates commits into a single log with `## <repo>` headers when multi-repo
-2. Builds a structured prompt with three required sections (`## Yesterday`, `## Today`, `## Blockers`)
+1. Resolves the active mode (single / `--repos` / `--repo-dir` / `--gh`) and aggregates commits into a single log with `## <repo>` headers when multi-repo. Each commit line carries its `YYYY-MM-DD` date so the model can split today vs. earlier.
+2. Builds a structured prompt with two required sections (`## Yesterday`, `## Today`)
 3. Hands it off to `fledge ask --no-spec-index "<prompt>"` so it inherits your provider, model, timeouts, and rate-limit config
 
 The model is told to:
 
-- Write past-tense bullets for "Yesterday" using the commit subjects (stripping `feat:`/`fix:` prefixes)
+- Put past-tense bullets for commits dated **before today** under "Yesterday" (stripping `feat:`/`fix:` prefixes)
+- Put past-tense bullets for commits dated **today** under "Today"
+- If there were no commits today, fall back to 1–3 inferred next-step bullets prefixed with `(inferred)`
 - Annotate multi-repo bullets with the repo name in parentheses
-- Infer 1–3 "Today" items, prefixed with `(inferred)` so you can edit
-- Leave "Blockers" as `None` unless the log explicitly mentions one
 
 ## Caveats
 

@@ -358,19 +358,17 @@ fn build_prompt(
     let mut prompt = format!(
         "You are turning a list of git commits into a concise, paste-ready Markdown standup post for a team channel.\n\
 \n\
-Output exactly three sections, in this order, using these headers verbatim:\n\
+Output exactly two sections, in this order, using these headers verbatim:\n\
   ## Yesterday\n\
   ## Today\n\
-  ## Blockers\n\
 \n\
 Today's date is {today}. Each commit line in the input begins with its date in YYYY-MM-DD form, then the short SHA, then the subject.\n\
 \n\
 Rules:\n\
 - \"Yesterday\" — past-tense bullets for commits whose date is BEFORE {today}. Write 3–8 bullets grouped by theme. Use the commit subjects, rewrite them in past tense, and strip conventional-commit prefixes (feat:, fix:, etc.). When commits span multiple repos (the input may have \"## owner/repo\" headers), call out which repo each bullet belongs to in parentheses, e.g. \"- Bumped tokei to library mode (fledge-plugin-metrics)\".\n\
 - \"Today\" — past-tense bullets for commits whose date IS {today}, written the same way as Yesterday (multi-repo annotations included). If there are no commits dated {today}, then instead write 1–3 plausible next-step bullets inferred from the commits, each prefixed with \"(inferred)\" so the reader can edit.\n\
-- \"Blockers\" — write \"None\" unless a commit subject explicitly signals one (e.g. starts with `wip:`, `blocked:`, or `revert:`). No speculation.\n\
-- No preamble. No trailing summary. Just the three sections.\n\
-- Total length: 14 lines or fewer.\n\
+- No preamble. No trailing summary. Just the two sections.\n\
+- Total length: 12 lines or fewer.\n\
 \n\
 Scope: {scope_label}\n\
 Window: since {since}{author_part}\n\

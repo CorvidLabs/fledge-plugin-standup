@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.3.2] - 2026-04-25
+
+### Changed
+
+- Dropped the `## Blockers` section. From commit metadata alone it almost always read "None"; treat blockers as something you add by hand if you have any.
+
 ## [v0.3.1] - 2026-04-25
 
 ### Fixed
