@@ -2,6 +2,8 @@
 
 Generate a paste-ready Markdown standup post from your recent git commits, narrated by whatever LLM you've configured via [`fledge ai use`](https://github.com/CorvidLabs/fledge). Works on a single repo, a list of repos, an entire dev directory, or every repo on GitHub you've touched.
 
+Rewritten in Rust (v0.3.0+). The previous bash version needed `python3` (date math) and `jq` (JSON parsing) at runtime; the Rust version handles both in-process. `git` is always required; `gh` is required for `--gh`.
+
 ```
 $ fledge standup --gh --since "1 week ago"
 ## Yesterday
@@ -22,6 +24,8 @@ None
 ```bash
 fledge plugins install CorvidLabs/fledge-plugin-standup
 ```
+
+`fledge plugins install` auto-detects `Cargo.toml` and runs `cargo build --release` for you — only a Rust toolchain is required at install time.
 
 Make sure an AI provider is configured:
 
@@ -66,7 +70,7 @@ fledge standup --gh --since "1 week ago"
 fledge standup --gh --gh-user 0xLeif --since yesterday
 ```
 
-`--gh` shells out to `gh search commits` so it doesn't need local clones. Sees only commits you pushed to GitHub-visible repos. Requires `gh`, `jq`, and `python3` (for date math). Only commits visible to your authenticated user count, so this won't surface private-repo work you don't have access to.
+`--gh` shells out to `gh search commits` so it doesn't need local clones. Sees only commits you pushed to GitHub-visible repos. Requires `gh` (the JSON parsing and date math that used to need `jq`/`python3` are now built in). Only commits visible to your authenticated user count, so this won't surface private-repo work you don't have access to.
 
 ### Output controls
 
@@ -86,11 +90,11 @@ Anything after `--` is forwarded to `fledge ask`.
 
 ## How it works
 
-~280 lines of bash that:
+A single Rust binary that:
 
 1. Resolves the active mode (single / `--repos` / `--repo-dir` / `--gh`) and aggregates commits into a single log with `## <repo>` headers when multi-repo
 2. Builds a structured prompt with three required sections (`## Yesterday`, `## Today`, `## Blockers`)
-3. Pipes it through `fledge ask --no-spec-index "$PROMPT"` so it inherits your provider, model, timeouts, and rate-limit config
+3. Hands it off to `fledge ask --no-spec-index "<prompt>"` so it inherits your provider, model, timeouts, and rate-limit config
 
 The model is told to:
 

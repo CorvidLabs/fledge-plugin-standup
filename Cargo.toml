@@ -1,0 +1,25 @@
+[package]
+name = "fledge-plugin-standup"
+version = "0.3.0"
+edition = "2021"
+rust-version = "1.89"
+description = "Markdown standup summary from your recent git commits, narrated by the active LLM."
+license = "MIT"
+authors = ["0xLeif"]
+repository = "https://github.com/CorvidLabs/fledge-plugin-standup"
+
+[[bin]]
+name = "fledge-standup"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+time = "0.3"
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1

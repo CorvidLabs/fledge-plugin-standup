@@ -1,6 +1,7 @@
 # Build artifacts
 /target/
 /dist/
+Cargo.lock
 
 # OS
 .DS_Store
