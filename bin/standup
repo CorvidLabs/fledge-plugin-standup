@@ -25,9 +25,11 @@ OPTIONS:
                       "yesterday", "2026-04-20", etc.
   --author <NAME>     Filter to a specific author. Matches `git log --author`
                       semantics (substring against name AND email).
-  --me                Shorthand for --author "$(git config user.name)" — but
-                      try plain (no filter) first if your commits land via
-                      squash-merge under a different name.
+  --me                Filter to commits by you. Uses `git config user.email`
+                      first (stable across squash-merges) and falls back to
+                      `git config user.name`. `git log --author` substring-
+                      matches both name and email, so this works even when
+                      your display name varies between repos.
   --include-diff      Include diff stats in the model's context (slower, richer)
   --raw               Skip the AI step — print the raw `git log` output
   --show-prompt       Print the prompt that was sent (debug)
@@ -72,10 +74,20 @@ fi
 # commits under a "real name" that differs from local `git config user.name`,
 # so auto-filtering surprises users with empty results. Use --me / --author
 # to opt in to filtering.
+#
+# --me prefers `git config user.email` because email is stable across
+# squash-merges (the display name often isn't — a contributor's local
+# user.name might be a handle while their committed name is their real
+# first name). `git log --author` does substring match against both name
+# AND email, so passing the email finds commits regardless of how the
+# display name was rendered.
 if [ "$ME" = "true" ] && [ -z "$AUTHOR" ]; then
-  AUTHOR="$(git config user.name 2>/dev/null || true)"
+  AUTHOR="$(git config user.email 2>/dev/null || true)"
   if [ -z "$AUTHOR" ]; then
-    echo "fledge standup: --me passed but git config user.name is unset." >&2
+    AUTHOR="$(git config user.name 2>/dev/null || true)"
+  fi
+  if [ -z "$AUTHOR" ]; then
+    echo "fledge standup: --me passed but neither user.email nor user.name is set." >&2
     exit 65
   fi
 fi
