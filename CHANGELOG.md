@@ -1,5 +1,16 @@
 # Changelog
 
+## [v0.3.3] - 2026-05-03
+
+### Added
+
+- CI workflow (build/test/clippy/rustfmt on Linux, macOS, Windows).
+- Release workflow that cross-compiles binaries for `x86_64-linux`, `x86_64-darwin`, `aarch64-darwin`, `x86_64-windows` and attaches them to the GitHub release on tag push.
+
+### Changed
+
+- Applied `cargo fmt` so the lint job stays green.
+
 ## [v0.3.2] - 2026-04-25
 
 ### Changed
