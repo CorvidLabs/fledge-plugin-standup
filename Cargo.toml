@@ -1,6 +1,6 @@
 [package]
 name = "fledge-plugin-standup"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2021"
 rust-version = "1.89"
 description = "Markdown standup summary from your recent git commits, narrated by the active LLM."
