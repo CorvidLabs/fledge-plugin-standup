@@ -168,7 +168,9 @@ fn scope_single(cli: &Cli) -> Result<Scope> {
                 for name in &recent {
                     eprintln!("    - {name}");
                 }
-                eprintln!("  Try: fledge standup --author <name>  (or drop --me/--author for everyone)");
+                eprintln!(
+                    "  Try: fledge standup --author <name>  (or drop --me/--author for everyone)"
+                );
             }
         } else {
             eprintln!(
@@ -176,16 +178,28 @@ fn scope_single(cli: &Cli) -> Result<Scope> {
                 since = cli.since
             );
         }
-        return Ok(Scope { log, diff_stats: None, label });
+        return Ok(Scope {
+            log,
+            diff_stats: None,
+            label,
+        });
     }
 
     let diff_stats = if cli.include_diff {
-        Some(git_diff_stats(Path::new("."), &cli.since, cli.author.as_deref())?)
+        Some(git_diff_stats(
+            Path::new("."),
+            &cli.since,
+            cli.author.as_deref(),
+        )?)
     } else {
         None
     };
 
-    Ok(Scope { log, diff_stats, label })
+    Ok(Scope {
+        log,
+        diff_stats,
+        label,
+    })
 }
 
 // MARK: - Multi repo (--repos / --repo-dir)
@@ -314,14 +328,24 @@ fn scope_gh(cli: &Cli) -> Result<Scope> {
         eprintln!(
             "fledge standup: no commits found on GitHub for author '{gh_author}' since {since_iso}."
         );
-        return Ok(Scope { log: String::new(), diff_stats: None, label });
+        return Ok(Scope {
+            log: String::new(),
+            diff_stats: None,
+            label,
+        });
     }
 
     let offset = local_offset();
     let mut by_repo: BTreeMap<String, Vec<(String, String, String)>> = BTreeMap::new();
     for entry in commits {
         let short_sha: String = entry.sha.chars().take(7).collect();
-        let subject = entry.commit.message.lines().next().unwrap_or("").to_string();
+        let subject = entry
+            .commit
+            .message
+            .lines()
+            .next()
+            .unwrap_or("")
+            .to_string();
         let date = iso_to_local_date(&entry.commit.committer.date, offset);
         by_repo
             .entry(entry.repository.full_name)
@@ -339,7 +363,11 @@ fn scope_gh(cli: &Cli) -> Result<Scope> {
     }
     let log = log.trim_end().to_string();
 
-    Ok(Scope { log, diff_stats: None, label })
+    Ok(Scope {
+        log,
+        diff_stats: None,
+        label,
+    })
 }
 
 // MARK: - Prompt
@@ -471,11 +499,15 @@ fn git_diff_stats(path: &Path, since: &str, author: Option<&str>) -> Result<Stri
     let mut cmd = Command::new("git");
     cmd.arg("-C").arg(path).arg("log");
     cmd.arg(format!("--since={since}"));
-    cmd.arg("--shortstat").arg("--pretty=format:%h").arg("--no-merges");
+    cmd.arg("--shortstat")
+        .arg("--pretty=format:%h")
+        .arg("--no-merges");
     if let Some(name) = author {
         cmd.arg(format!("--author={name}"));
     }
-    let output = cmd.output().context("failed to run `git log --shortstat`")?;
+    let output = cmd
+        .output()
+        .context("failed to run `git log --shortstat`")?;
     if !output.status.success() {
         return Ok(String::new());
     }
@@ -565,7 +597,12 @@ fn since_to_iso_date(spec: &str) -> Result<String> {
 
 fn format_iso_date(when: OffsetDateTime) -> String {
     let date = when.date();
-    format!("{:04}-{:02}-{:02}", date.year(), date.month() as u8, date.day())
+    format!(
+        "{:04}-{:02}-{:02}",
+        date.year(),
+        date.month() as u8,
+        date.day()
+    )
 }
 
 fn local_offset() -> UtcOffset {
