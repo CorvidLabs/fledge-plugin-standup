@@ -620,3 +620,235 @@ fn iso_to_local_date(iso: &str, offset: UtcOffset) -> String {
         .map(format_iso_date)
         .unwrap_or_else(|_| iso.chars().take(10).collect())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use time::UtcOffset;
+
+    // --- since_to_iso_date (time range parsing) ---
+
+    #[test]
+    fn since_to_iso_parses_days_ago() {
+        let result = since_to_iso_date("1 day ago").unwrap();
+        assert_eq!(result.len(), 10);
+        assert!(result.starts_with("20"));
+        assert_eq!(&result[4..5], "-");
+        assert_eq!(&result[7..8], "-");
+    }
+
+    #[test]
+    fn since_to_iso_parses_hours_ago() {
+        let result = since_to_iso_date("24 hours ago").unwrap();
+        assert_eq!(result.len(), 10);
+    }
+
+    #[test]
+    fn since_to_iso_parses_weeks_ago() {
+        let result = since_to_iso_date("2 weeks ago").unwrap();
+        assert_eq!(result.len(), 10);
+    }
+
+    #[test]
+    fn since_to_iso_parses_months_ago() {
+        let result = since_to_iso_date("3 months ago").unwrap();
+        assert_eq!(result.len(), 10);
+    }
+
+    #[test]
+    fn since_to_iso_parses_yesterday() {
+        let result = since_to_iso_date("yesterday").unwrap();
+        assert_eq!(result.len(), 10);
+    }
+
+    #[test]
+    fn since_to_iso_parses_today() {
+        let result = since_to_iso_date("today").unwrap();
+        assert_eq!(result.len(), 10);
+    }
+
+    #[test]
+    fn since_to_iso_passthrough_date() {
+        let result = since_to_iso_date("2026-04-20").unwrap();
+        assert_eq!(result, "2026-04-20");
+    }
+
+    #[test]
+    fn since_to_iso_rejects_garbage() {
+        assert!(since_to_iso_date("last tuesday").is_err());
+    }
+
+    #[test]
+    fn since_to_iso_rejects_partial() {
+        assert!(since_to_iso_date("1 fortnight ago").is_err());
+    }
+
+    // --- format_iso_date ---
+
+    #[test]
+    fn format_iso_date_basic() {
+        let dt = OffsetDateTime::from_unix_timestamp(1714003200).unwrap(); // 2024-04-25 UTC
+        let s = format_iso_date(dt);
+        assert_eq!(s, "2024-04-25");
+    }
+
+    #[test]
+    fn format_iso_date_zero_pads() {
+        // Jan 5 2024 00:00:00 UTC
+        let dt = OffsetDateTime::from_unix_timestamp(1704412800).unwrap();
+        let s = format_iso_date(dt);
+        assert_eq!(&s[5..7], "01"); // month zero-padded
+    }
+
+    // --- iso_to_local_date ---
+
+    #[test]
+    fn iso_to_local_date_valid_rfc3339() {
+        let result = iso_to_local_date("2026-04-20T12:00:00Z", UtcOffset::UTC);
+        assert_eq!(result, "2026-04-20");
+    }
+
+    #[test]
+    fn iso_to_local_date_with_offset() {
+        // 2026-04-20T23:30:00Z at UTC+5 => 2026-04-21
+        let offset = UtcOffset::from_hms(5, 0, 0).unwrap();
+        let result = iso_to_local_date("2026-04-20T23:30:00Z", offset);
+        assert_eq!(result, "2026-04-21");
+    }
+
+    #[test]
+    fn iso_to_local_date_fallback_on_bad_input() {
+        let result = iso_to_local_date("not-a-date-at-all", UtcOffset::UTC);
+        assert_eq!(result, "not-a-date");
+    }
+
+    #[test]
+    fn iso_to_local_date_fallback_truncates_to_10() {
+        let result = iso_to_local_date("2026-04-20 not rfc3339", UtcOffset::UTC);
+        assert_eq!(result, "2026-04-20");
+    }
+
+    // --- expand_tilde ---
+
+    #[test]
+    fn expand_tilde_with_home() {
+        std::env::set_var("HOME", "/home/dev");
+        let result = expand_tilde("~/projects/foo");
+        assert_eq!(result, PathBuf::from("/home/dev/projects/foo"));
+    }
+
+    #[test]
+    fn expand_tilde_no_tilde() {
+        let result = expand_tilde("/absolute/path");
+        assert_eq!(result, PathBuf::from("/absolute/path"));
+    }
+
+    #[test]
+    fn expand_tilde_only_tilde_prefix() {
+        // "~user/foo" should NOT expand (only "~/" does)
+        let result = expand_tilde("~user/foo");
+        assert_eq!(result, PathBuf::from("~user/foo"));
+    }
+
+    // --- build_prompt (markdown formatting) ---
+
+    #[test]
+    fn build_prompt_contains_required_sections() {
+        let cli = Cli::parse_from(["fledge-standup", "--since", "1 day ago"]);
+        let prompt = build_prompt(
+            &cli,
+            "my-project",
+            "2026-05-04  abc1234  feat: add thing",
+            None,
+            "2026-05-05",
+        );
+        assert!(prompt.contains("## Yesterday"));
+        assert!(prompt.contains("## Today"));
+    }
+
+    #[test]
+    fn build_prompt_includes_scope_and_window() {
+        let cli = Cli::parse_from(["fledge-standup", "--since", "1 week ago"]);
+        let prompt = build_prompt(
+            &cli,
+            "fledge",
+            "2026-05-01  abc1234  fix: bug",
+            None,
+            "2026-05-05",
+        );
+        assert!(prompt.contains("Scope: fledge"));
+        assert!(prompt.contains("since 1 week ago"));
+    }
+
+    #[test]
+    fn build_prompt_includes_author_when_set() {
+        let cli = Cli::parse_from(["fledge-standup", "--since", "1 day ago", "--author", "Leif"]);
+        let prompt = build_prompt(
+            &cli,
+            "project",
+            "2026-05-04  abc  fix stuff",
+            None,
+            "2026-05-05",
+        );
+        assert!(prompt.contains("(author: Leif)"));
+    }
+
+    #[test]
+    fn build_prompt_no_author_annotation_when_none() {
+        let cli = Cli::parse_from(["fledge-standup", "--since", "1 day ago"]);
+        let prompt = build_prompt(
+            &cli,
+            "project",
+            "2026-05-04  abc  fix stuff",
+            None,
+            "2026-05-05",
+        );
+        assert!(!prompt.contains("(author:"));
+    }
+
+    #[test]
+    fn build_prompt_includes_diff_stats_when_provided() {
+        let cli = Cli::parse_from(["fledge-standup", "--since", "1 day ago"]);
+        let prompt = build_prompt(
+            &cli,
+            "project",
+            "2026-05-04  abc  work",
+            Some("abc1234\n 3 files changed, 50 insertions(+), 10 deletions(-)"),
+            "2026-05-05",
+        );
+        assert!(prompt.contains("Diff stats (per commit):"));
+        assert!(prompt.contains("50 insertions"));
+    }
+
+    #[test]
+    fn build_prompt_no_diff_section_when_none() {
+        let cli = Cli::parse_from(["fledge-standup", "--since", "1 day ago"]);
+        let prompt = build_prompt(&cli, "project", "2026-05-04  abc  work", None, "2026-05-05");
+        assert!(!prompt.contains("Diff stats"));
+    }
+
+    #[test]
+    fn build_prompt_includes_commits_verbatim() {
+        let log =
+            "2026-05-04  abc1234  feat: something cool\n2026-05-04  def5678  fix: broken thing";
+        let cli = Cli::parse_from(["fledge-standup", "--since", "1 day ago"]);
+        let prompt = build_prompt(&cli, "project", log, None, "2026-05-05");
+        assert!(prompt.contains("abc1234  feat: something cool"));
+        assert!(prompt.contains("def5678  fix: broken thing"));
+    }
+
+    // --- repo_basename ---
+
+    #[test]
+    fn repo_basename_extracts_last_component() {
+        let result = repo_basename(Path::new("/home/user/dev/my-project"));
+        assert_eq!(result, "my-project");
+    }
+
+    // --- is_git_repo ---
+
+    #[test]
+    fn is_git_repo_false_for_tmp() {
+        assert!(!is_git_repo(Path::new("/tmp")));
+    }
+}
