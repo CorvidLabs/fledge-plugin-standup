@@ -441,13 +441,19 @@ fn is_git_repo(path: &Path) -> bool {
     path.join(".git").exists()
 }
 
-fn expand_tilde(value: &str) -> PathBuf {
-    if let Some(rest) = value.strip_prefix("~/") {
-        if let Some(home) = std::env::var_os("HOME") {
-            return PathBuf::from(home).join(rest);
-        }
+fn expand_tilde(p: &str) -> PathBuf {
+    if !p.starts_with("~/") && p != "~" {
+        return PathBuf::from(p);
     }
-    PathBuf::from(value)
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("~"));
+    if p == "~" {
+        home
+    } else {
+        home.join(&p[2..])
+    }
 }
 
 fn project_label(path: &Path) -> String {
@@ -540,9 +546,20 @@ fn recent_authors(path: &Path, since: &str) -> Result<Vec<String>> {
 
 fn which(cmd: &str) -> Option<PathBuf> {
     let path_var = std::env::var_os("PATH")?;
-    std::env::split_paths(&path_var)
-        .map(|dir| dir.join(cmd))
-        .find(|candidate| candidate.is_file())
+    for dir in std::env::split_paths(&path_var) {
+        let candidate = dir.join(cmd);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        #[cfg(windows)]
+        for ext in &["exe", "cmd", "bat"] {
+            let with_ext = dir.join(format!("{cmd}.{ext}"));
+            if with_ext.is_file() {
+                return Some(with_ext);
+            }
+        }
+    }
+    None
 }
 
 /// Convert a `git log --since` style spec into a YYYY-MM-DD string suitable
