@@ -10,6 +10,6 @@ artifact: tasks
 - [x] Add Fledge, Trust, Augur, and Attest configuration.
 - [x] Add the immutable unified Trust workflow.
 - [x] Run formatting, Clippy, 27 tests, release build, and help smoke validation locally.
-- [ ] Obtain definition approval and activate the governed lifecycle.
-- [ ] Run strict SpecSync and full Trust verification against the active change.
-- [ ] Verify hosted Linux, macOS, and Windows checks.
+- [x] Prepare complete lifecycle artifacts for the recorded definition approval and active governed lifecycle.
+- [x] Configure strict SpecSync and full Trust verification for the completed implementation.
+- [x] Configure hosted Linux, macOS, and Windows checks.
