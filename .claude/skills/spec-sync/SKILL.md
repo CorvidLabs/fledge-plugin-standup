@@ -7,8 +7,6 @@ description: Keep markdown module specs in specs/<module>/ synchronized with sou
 
 This project uses [spec-sync](https://github.com/CorvidLabs/spec-sync) for bidirectional spec-to-code validation. Specs live in `specs/<module>/<module>.spec.md`.
 
-## Companion files
-
 ## Verified SDD change lifecycle (5.0)
 
 For every meaningful source, test, public documentation, schema, or configuration change:

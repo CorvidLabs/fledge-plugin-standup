@@ -1,3 +1,11 @@
 {
-  "approvals": []
+  "approvals": [
+    {
+      "gate": "definition",
+      "actor": "user:0xLeif",
+      "timestamp": 1783954477,
+      "digest": "e69f57110c80ccfdce59c694326f289e6fb22a69616a0585a715eaed4267dc16",
+      "note": "Definition approved after exact requirement-evidence and native-lane audit; unrelated formatting changes excluded."
+    }
+  ]
 }
