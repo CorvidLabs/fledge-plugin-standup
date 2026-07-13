@@ -1,0 +1,11 @@
+# fledge.toml — project task definitions
+[tasks]
+fmt = "cargo fmt --check"
+lint = "cargo clippy -- -D warnings"
+test = "cargo test"
+build = "cargo build --release"
+smoke = "./target/release/fledge-standup --help >/dev/null"
+
+[lanes.verify]
+description = "Format, lint, test, build, and smoke-test the standup plugin"
+steps = ["fmt", "lint", "test", "build", "smoke"]

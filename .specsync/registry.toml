@@ -1,0 +1,5 @@
+[registry]
+name = "fledge-plugin-standup-trust-wave6"
+
+[specs]
+standup = "specs/standup/standup.spec.md"
