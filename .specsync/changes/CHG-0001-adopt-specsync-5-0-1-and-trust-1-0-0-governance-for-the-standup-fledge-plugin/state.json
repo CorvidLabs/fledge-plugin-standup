@@ -5,10 +5,10 @@
   "title": "Adopt SpecSync 5.0.1 and Trust 1.0.0 governance for the Standup Fledge plugin",
   "description": "Adopt SpecSync 5.0.1 and Trust 1.0.0 governance for the Standup Fledge plugin",
   "kind": "migration",
-  "state": "implementing",
+  "state": "verifying",
   "base_commit": "5c17d30b325361e3ebb1322a649b007ea96befab",
   "created_at": 1783883311,
-  "updated_at": 1783954651,
+  "updated_at": 1783954690,
   "affected_specs": [
     "standup"
   ],

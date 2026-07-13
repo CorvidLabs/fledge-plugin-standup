@@ -1,6 +1,6 @@
 ---
 id: CHG-0001-adopt-specsync-5-0-1-and-trust-1-0-0-governance-for-the-standup-fledge-plugin
-state: implementing
+state: verifying
 type: migration
 base_commit: 5c17d30b325361e3ebb1322a649b007ea96befab
 ---
