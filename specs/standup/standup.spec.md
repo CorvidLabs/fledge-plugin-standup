@@ -1,6 +1,6 @@
 ---
 module: standup
-version: 1
+version: 2
 status: active
 files:
   - src/main.rs
@@ -67,3 +67,5 @@ Then the plugin aggregates deterministic commit context and delegates a Markdown
 | Version | Date | Changes |
 |---------|------|---------|
 | 1 | 2026-07-12 | Document existing local, multi-repository, GitHub-wide, raw, and narrated standup behavior for SpecSync 5 adoption. |
+| 2 | 2026-07-13 | Reconciled existing prompt, scope, and date documentation with stable requirement IDs for SpecSync 5.0.1 governance; runtime behavior is unchanged. |
+| 2026-07-13 | CHG-0001-adopt-specsync-5-0-1-and-trust-1-0-0-governance-for-the-standup-fledge-plugin: Adopt SpecSync 5.0.1 and Trust 1.0.0 governance for the Standup Fledge plugin |

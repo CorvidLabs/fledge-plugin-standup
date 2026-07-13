@@ -12,6 +12,9 @@ spec: standup.spec.md
 
 Single-repository scope SHALL aggregate the selected time window and author, with optional diff statistics.
 
+Acceptance Criteria
+- Existing unit tests verify the prompt includes the selected scope and window, includes author context when supplied, and includes diff statistics only when present.
+
 ### REQ-standup-002
 
 Multi-repository scope SHALL validate repositories, skip invalid entries with diagnostics, and group non-empty logs deterministically.
